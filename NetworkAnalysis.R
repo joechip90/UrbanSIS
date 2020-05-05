@@ -2,6 +2,8 @@ library(sf)
 library(lubridate)
 library(httr)
 library(jsonlite)
+library(parallel)
+library(coda)
 library(nimble)
 
 source(paste(Sys.getenv("WORKSPACE_URBANSIS_GITHUB"), "RetrieveWeatherData.R", sep = "/"))
@@ -10,6 +12,15 @@ source(paste(Sys.getenv("WORKSPACE_URBANSIS_GITHUB"), "RetrieveWeatherData.R", s
 workspaceLoc <- paste(Sys.getenv("WORKSPACE_URBANSIS_ANALYSIS"), "OsloBeeAnalysis", sep = "/")
 # Import the transect and pantrap data
 processedData <- readRDS(paste(workspaceLoc, "ProcessedPantrapAndTransectData.rds", sep = "/"))
+
+# Initialise appropriate paramaeters for MCMC analysis
+mcmcSamples <- 150000
+mcmcChains <- 4
+mcmcBurnIn <- 10000
+numVarsWanted <- 1000
+numPredsWanted <- 100
+monitorOneThin <- floor(mcmcSamples * mcmcChains / numVarsWanted)
+monitorTwoThin <- floor(mcmcSamples * mcmcChains / numPredsWanted)
 
 # Weather elements to retrieve from met data
 weatherElements <- c("air_temperature", "wind_speed")
@@ -20,9 +31,9 @@ locYRange <- range(locCoords[, "Y"], na.rm = TRUE)
 paddingPercent <- 10 / 100
 borderPolygon <- st_sfc(st_polygon(list(matrix(c(
   locXRange[1] - diff(locXRange) * paddingPercent, locYRange[1] - diff(locYRange) * paddingPercent,
-  locXRange[2] + diff(locXRange) * paddingPercent, locYRange[1] - diff(locYRange) * paddingPercent,
   locXRange[1] - diff(locXRange) * paddingPercent, locYRange[2] + diff(locYRange) * paddingPercent,
   locXRange[2] + diff(locXRange) * paddingPercent, locYRange[2] + diff(locYRange) * paddingPercent,
+  locXRange[2] + diff(locXRange) * paddingPercent, locYRange[1] - diff(locYRange) * paddingPercent,
   locXRange[1] - diff(locXRange) * paddingPercent, locYRange[1] - diff(locYRange) * paddingPercent
 ), ncol = 2, byrow = TRUE))), crs = st_crs(processedData$locations))
 
@@ -92,17 +103,8 @@ usableSpecies <- processedData$pollinatorSpecies[apply(X = mergedSampleData[, pr
   length(unique(curColumn[!is.na(curColumn)])) >= 2
 }, MARGIN = 2)]
 
-# Initialise appropriate paramaeters for MCMC analysis
-mcmcSamples <- 100000
-mcmcChains <- 4
-mcmcBurnIn <- 10000
-numVarsWanted <- 1000
-numPredsWanted <- 100
-monitorOneThin <- floor(mcmcSamples * mcmcChains / numVarsWanted)
-monitorTwoThin <- floor(mcmcSamples * mcmcChains / numPredsWanted)
 # Specify the NIMBLE code to run the model
-modelSpecCode <- nimbleCode({
-  ##### SET PRIORS #####
+modelSpecCode <- "##### SET PRIORS #####
   for(priorSpecIter in 1:numSpecies) {
     # Set hyperprior for variances in species counts (in log-scale)
     specVar[priorSpecIter] ~ dgamma(0.01, 0.01)
@@ -116,7 +118,7 @@ modelSpecCode <- nimbleCode({
     # Set the trap methodology coefficient
     pantrapCoeff[priorSpecIter] ~ dnorm(0.0, 0.01)
   }
-  # Initialise an "uninformative prior" for the matrix of species interactions (covariance-variance matrix)
+  # Initialise an \"uninformative prior\" for the matrix of species interactions (covariance-variance matrix)
   # However see http://dx.doi.org/10.1080/00273171.2015.1065398 for explanation that this might be fairly informative
   # in situations where the variance is small
   specVarMat[1:numSpecies, 1:numSpecies] <- diag(specVar[1:numSpecies])
@@ -131,8 +133,7 @@ modelSpecCode <- nimbleCode({
     }
     # Define the distribution of mean predictors at each location (once species interactions are taken into account)
     meanPred[dataIter, 1:numSpecies] ~ dmnorm(linPred[dataIter, 1:numSpecies], cov = interactionMatrix[1:numSpecies, 1:numSpecies])
-  }
-})
+  }"
 # Produce a matrix of regression covariates and centre and scale them
 regCovariates <- apply(X = as.matrix(cbind(as.data.frame(mergedSampleData[, suitableResCols]), data.frame(
   airTemperature = mergedSampleData[, "air_temperature"],
@@ -166,16 +167,51 @@ initialValues <- list(
   interactionMatrix = diag(inConstants$numSpecies),
   meanPred = matrix(rep(log(apply(X = inData$obsCounts, FUN = mean, MARGIN = 2)), rep(inConstants$numData, inConstants$numSpecies)), ncol = inConstants$numSpecies)
 )
-# Setup the model 
-uncompiledModel <- nimbleModel(code = modelSpecCode, constants = inConstants, data = inData, inits = initialValues)
-compiledModel <- compileNimble(uncompiledModel)
-# Define the MCMC object
-uncompiledMCMC <- buildMCMC(uncompiledModel, monitors = varsToMonitor, monitors2 = predsToMonitor, thin = monitorOneThin, thin2 = monitorTwoThin, enableWAIC = TRUE)
-compiledMCMC <- compileNimble(uncompiledMCMC, project = uncompiledModel)
-# Run the MCMC
-mcmcOutput <- runMCMC(compiledMCMC, niter = mcmcSamples + mcmcBurnIn, nburnin = mcmcBurnIn,
-  thin = monitorOneThin, thin2 = monitorTwoThin, nchains = mcmcChains,
-  samplesAsCodaMCMC = TRUE, WAIC = TRUE, summary = TRUE)
+# Retrieve the number of cores available (maximum the same as the number of chains)
+numCores <- min(detectCores(), mcmcChains)
+numChainsPerCore <- mcmcChains / numCores
+# Initialise a cluster
+chainCluster <- makeCluster(numCores, outfile = paste(workspaceLoc, "/MCMCLogFile.txt", sep = ""))
+# Define a function to setup and run the model
+runModelMCMC <- function(curSeed, modelSpecCode, inConstants, inData, initialValues, varsToMonitor, predsToMonitor, mcmcSamples, mcmcBurnIn, mcmcChains, monitorOneThin, monitorTwoThin) {
+  library(nimble)
+  inSpecCode <- eval(parse(text = paste("nimbleCode({", modelSpecCode, "})", sep = "\n")))
+  # Setup the model
+  uncompiledModel <- nimbleModel(code = inSpecCode, constants = inConstants, data = inData, inits = initialValues)
+  compiledModel <- compileNimble(uncompiledModel)
+  # Define the MCMC object
+  uncompiledMCMC <- buildMCMC(uncompiledModel, monitors = varsToMonitor, monitors2 = predsToMonitor, thin = monitorOneThin, thin2 = monitorTwoThin, enableWAIC = TRUE)
+  compiledMCMC <- compileNimble(uncompiledMCMC, project = uncompiledModel)
+  # Run the MCMC
+  mcmcOutput <- runMCMC(compiledMCMC, niter = mcmcSamples + mcmcBurnIn, nburnin = mcmcBurnIn,
+    thin = monitorOneThin, thin2 = monitorTwoThin, nchains = mcmcChains,
+    samplesAsCodaMCMC = TRUE, WAIC = TRUE, summary = FALSE, setSeed = curSeed)
+  mcmcOutput
+}
+# Run the parallelised version of NIMBLE
+allChainsOutput <- parLapply(cl = chainCluster, X = floor(runif(numCores, 0.0, .Machine$integer.max)), fun = runModelMCMC,
+  modelSpecCode = modelSpecCode, inConstants = inConstants, inData = inData, initialValues = initialValues, varsToMonitor = varsToMonitor,
+  predsToMonitor = predsToMonitor, mcmcSamples = mcmcSamples, mcmcBurnIn = mcmcBurnIn, mcmcChains = numChainsPerCore,
+  monitorOneThin = monitorOneThin, monitorTwoThin = monitorTwoThin)
+# Close the cluster
+stopCluster(chainCluster)
+# Merge the parallelised chains into one object
+chainList <- function(curChain, inElement) {
+  outMCMC <- curChain[[inElement]]
+  if(class(outMCMC) == "mcmc.list") {
+    outMCMC <- as.list(outMCMC)
+  } else {
+    outMCMC <- list(outMCMC)
+  }
+  outMCMC
+}
+mcmcOutput <- list(
+  samples = do.call(mcmc.list, do.call(c, lapply(X = allChainsOutput, FUN = chainList, inElement = "samples"))),
+  samples2 = do.call(mcmc.list, do.call(c, lapply(X = allChainsOutput, FUN = chainList, inElement = "samples2"))),
+  WAIC = mean(sapply(X = allChainsOutput, FUN = function(curChain) {
+    curChain$WAIC
+  }))
+)
 
 # Save the model output to the analysis output directory
 saveRDS(list(
