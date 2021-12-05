@@ -8,8 +8,8 @@ library(MASS)
 
 # The location of the analysis output
 urbanSISRepository <- file.path(Sys.getenv("WORKSPACE_URBANSIS"), "WP2 - Mapping - 15885002")
-# outLocation <- file.path(urbanSISRepository, "MultiCityAnalysis_Output", "mcmcOutput.rds")
-outputLocation <- file.path("C:/Users/joseph.chipperfield/OneDrive - NINA/Work/UrbanBees", "MultiCityAnalysis_Output")
+outputLocation <- file.path(urbanSISRepository, "MultiCityAnalysis_Output")
+# outputLocation <- file.path("C:/Users/joseph.chipperfield/OneDrive - NINA/Work/UrbanBees", "MultiCityAnalysis_Output")
 # Import the analysis outputs
 analysisOutput <- readRDS(file.path(outputLocation, "mcmcOutput.rds"))
 # Import the processed pantrap data
