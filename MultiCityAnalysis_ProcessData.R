@@ -142,7 +142,7 @@ processedBeeData <- do.call(rbind, lapply(X = unique(processedBeeData$sampleID),
   }
   cbind(as.data.frame(specCounts), trapInfo)
 }, processedBeeData = processedBeeData, rawOsloPantrapInfo = rawOsloPantrapInfo))
-# Remove the species with zero counts in any location
+# Remove the species with zero counts at all locations
 speciesToKeep <- sapply(X = gsub(" ", ".", speciesNames, fixed = TRUE), FUN = function(curSpecies, processedBeeData) {
   any(processedBeeData[, curSpecies] > 0)
 }, processedBeeData = processedBeeData)
@@ -151,3 +151,4 @@ saveRDS(list(
   pantrapData = processedBeeData[, c(speciesToKeep, rep(TRUE, ncol(processedBeeData) - length(speciesToKeep)))],
   speciesNames = speciesNames[speciesToKeep]
 ), file = outputLocation)
+write.csv2(processedBeeData[, c(speciesToKeep, rep(TRUE, ncol(processedBeeData) - length(speciesToKeep)))], file = file.path(urbanSISRepository, "MultiCity_ProcessedPantrapData.csv"))
