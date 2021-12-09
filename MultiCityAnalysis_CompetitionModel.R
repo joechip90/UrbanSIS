@@ -4,7 +4,7 @@ library(nimble)
 
 # Initialise appropriate parameters for MCMC analysis
 mcmcSamples <- 150000
-mcmcChains <- 4
+mcmcChains <- 10
 mcmcBurnIn <- 10000
 numVarsWanted <- 500
 numPredsWanted <- 500
