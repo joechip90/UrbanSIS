@@ -13,6 +13,10 @@ workspaceLoc <- file.path(Sys.getenv("WORKSPACE_URBANSIS"), "WP2 - Mapping - 158
 # Import the transect and pantrap data
 processedData <- readRDS(file.path(Sys.getenv("WORKSPACE_URBANSIS"), "WP2 - Mapping - 15885002", "Field DATA final", "ProcessedPantrapAndTransectData.rds"))
 
+if(!dir.exists(workspaceLoc)) {
+  dir.create(workspaceLoc)
+}
+
 # Initialise appropriate parameters for MCMC analysis
 mcmcSamples <- 150000
 mcmcChains <- 4
