@@ -6,10 +6,10 @@ library(parallel)
 library(coda)
 library(nimble)
 
-source(paste(Sys.getenv("WORKSPACE_URBANSIS_GITHUB"), "RetrieveWeatherData.R", sep = "/"))
+source(paste(Sys.getenv("WORKSPACE_URBANSIS_GITHUB"), "OsloAnalysis_RetrieveWeatherData.R", sep = "/"))
 
 # Set the workspace to perform the analysis in
-workspaceLoc <- paste(Sys.getenv("WORKSPACE_URBANSIS_ANALYSIS"), "OsloBeeAnalysis", sep = "/")
+workspaceLoc <- paste(Sys.getenv("WORKSPACE_URBANSIS_ANALYSIS"), "OsloAnalysis", sep = "/")
 # Import the transect and pantrap data
 processedData <- readRDS(paste(workspaceLoc, "ProcessedPantrapAndTransectData.rds", sep = "/"))
 
@@ -17,8 +17,8 @@ processedData <- readRDS(paste(workspaceLoc, "ProcessedPantrapAndTransectData.rd
 mcmcSamples <- 150000
 mcmcChains <- 4
 mcmcBurnIn <- 10000
-numVarsWanted <- 1000
-numPredsWanted <- 100
+numVarsWanted <- 500
+numPredsWanted <- 500
 monitorOneThin <- floor(mcmcSamples * mcmcChains / numVarsWanted)
 monitorTwoThin <- floor(mcmcSamples * mcmcChains / numPredsWanted)
 

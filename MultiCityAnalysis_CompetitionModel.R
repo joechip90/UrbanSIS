@@ -3,7 +3,7 @@ library(coda)
 library(nimble)
 
 # Initialise appropriate parameters for MCMC analysis
-mcmcSamples <- 100000
+mcmcSamples <- 150000
 mcmcChains <- 4
 mcmcBurnIn <- 10000
 numVarsWanted <- 500
