@@ -1,66 +1,63 @@
 library(parallel)
 library(coda)
 library(nimble)
+library(abind)
 
 # Initialise appropriate parameters for MCMC analysis
 mcmcSamples <- 150000
-mcmcChains <- 10
+mcmcChains <- 4
 mcmcBurnIn <- 10000
-numVarsWanted <- 500
-numPredsWanted <- 500
+numVarsWanted <- 100
+numPredsWanted <- 50
 monitorOneThin <- floor(mcmcSamples * mcmcChains / numVarsWanted)
 monitorTwoThin <- floor(mcmcSamples * mcmcChains / numPredsWanted)
 
 # Set the location of the pan trap and pollinator collection data
 urbanSISRepository <- file.path(Sys.getenv("WORKSPACE_URBANSIS"), "WP2 - Mapping - 15885002")
 outputLocation <- file.path(urbanSISRepository, "MultiCityAnalysis_Output")
-# outputLocation <- file.path(Sys.getenv("WORKSPACE_URBANSIS_ANALYSIS"), "MultiCityAnalysis_Output")
+#outputLocation <- file.path(Sys.getenv("WORKSPACE_URBANSIS_ANALYSIS"), "MultiCityAnalysis_Output")
 # Import the processed pantrap data
 inputData <- readRDS(file.path(urbanSISRepository, "MultiCity_ProcessedPantrapData.rds"))
 pantrapData <- inputData$pantrapData
 
+# Remove the output directory if it already exists
 if(dir.exists(outputLocation)) {
   unlink(outputLocation, recursive = TRUE)
 }
 dir.create(outputLocation)
-# Add trapping duration information to the pantrap data
-pantrapData <- cbind(pantrapData, data.frame(
-  # Get an estimate for the number of trapping days
-  estTrappingDays = abs(as.numeric(difftime(
-    as.Date(paste(
-      pantrapData$yearBegin,
-      pantrapData$monthBegin,
-      ifelse(is.na(pantrapData$dayBegin), 1, pantrapData$dayBegin),
-      sep = "-")),
-    as.Date(paste(
-      ifelse(is.na(pantrapData$dayEnd) & pantrapData$monthEnd >= 12, 1, 0) + pantrapData$yearEnd,
-      ifelse(is.na(pantrapData$dayEnd), ifelse(pantrapData$monthEnd >= 12, 1, pantrapData$monthEnd + 1), pantrapData$monthEnd),
-      ifelse(is.na(pantrapData$dayEnd), 1, pantrapData$dayEnd),
-      sep = "-"))
-  )))
-))
+
 # Set the variables to monitor
-varsToMonitorOne <- c("interactionMatrix", "specCoef")
-varsToMonitorTwo <- c("transPred")
+varsToMonitorOne <- c("interactionMatrix", "specCoef")  # Monitors the interaction matrix elements and the log of mean species counts at each city
+varsToMonitorTwo <- c("transPred")                      # Monitors the predictions made at each city
+
 # Define a function to setup and run the model
-runModelMCMC <- function(curIndex, seedArray, speciesNames, pantrapData, varsToMonitor, predsToMonitor, mcmcSamples, mcmcBurnIn, mcmcChains, monitorOneThin, monitorTwoThin, outputLocation) {
+runModelMCMC <- function(curChainNumber, seedArray, speciesNames, pantrapData, varsToMonitor, predsToMonitor, mcmcSamples, mcmcBurnIn, mcmcChains, monitorOneThin, monitorTwoThin, outputLocation) {
+  # Create a log file for the current chain
+  sink(file = file.path(outputLocation, paste("MCMCLogFile_chain", curChainNumber, ".txt", sep = "")))
+  # Load the nimble and coda libraries
+  library(coda)
   library(nimble)
-  # Retrieve the current city
-  curCity <- levels(pantrapData$cityID)[curIndex]
-  isCurCity <- as.character(pantrapData$cityID) == curCity
-  sink(file = file.path(outputLocation, paste("MCMCLogFile_", curCity, ".txt", sep = "")))
   # Retrieve the current seed from the seed array
-  curSeed <- seedArray[curIndex]
-  # Retrieve those species that are present in the city
-  specMatrix <- as.matrix(pantrapData[isCurCity, gsub(" ", ".", speciesNames, fixed = TRUE)])
-  isPresentSpecies <- apply(X = specMatrix, FUN = sum, MARGIN = 2) > 0
-  curSpeciesNames <- speciesNames[isPresentSpecies]
-  # Retrieve the months that are present in the data set
-  monthsPresent <- sort(unique(pantrapData$monthBegin))
+  curSeed <- seedArray[curChainNumber]
   # Retrieve the data for the current city
   inData <- list(
-    trapCounts = specMatrix[, isPresentSpecies],
-    estTrappingDays = pantrapData$estTrappingDays[isCurCity]
+    trapCounts = as.matrix(pantrapData[, gsub(" ", ".", speciesNames, fixed = TRUE)])
+  )
+  # Setup the constants used in the model
+  inConstants <- list(
+    numSpecies = length(speciesNames),
+    numData = nrow(inData$trapCounts),
+    numCities = length(levels(pantrapData$cityID)),
+    cityID = as.integer(pantrapData$cityID)
+  )
+  # Set initial values
+  specMeans <- log(apply(X = inData$trapCounts, FUN = mean, MARGIN = 2))
+  specVar <- apply(X = inData$trapCounts, FUN = var, MARGIN = 2)
+  initialValues <- list(
+    specVar = specVar,
+    interactionMatrix = diag(specVar),
+    meanPred = matrix(rep(specMeans, inConstants$numData), nrow = inConstants$numData, ncol = inConstants$numSpecies, byrow = TRUE),
+    specCoef = matrix(rep(specMeans, inConstants$numCities), nrow = inConstants$numCities, ncol = inConstants$numSpecies, byrow = TRUE)
   )
   # Specify the NIMBLE model
   modelSpecCode <- nimbleCode({
@@ -68,9 +65,9 @@ runModelMCMC <- function(curIndex, seedArray, speciesNames, pantrapData, varsToM
     for(priorSpecIter in 1:numSpecies) {
       # Set a prior for the variance in the number of individuals for each species
       specVar[priorSpecIter] ~ dgamma(0.01, 0.01)
-      for(priorMonthIter in 1:numMonths) {
-        # Set a prior for the background mean number of individuals for each species caught per trapping day
-        specCoef[priorMonthIter, priorSpecIter] ~ dnorm(0.0, 0.01)
+      for(priorCityIter in 1:numCities) {
+        # Each species has a different mean count in each city
+        specCoef[priorCityIter, priorSpecIter] ~ dnorm(0.0, 0.01)
       }
     }
     # Initialise an \"uninformative prior\" for the matrix of species interactions (covariance-variance matrix)
@@ -81,32 +78,15 @@ runModelMCMC <- function(curIndex, seedArray, speciesNames, pantrapData, varsToM
     ###### SET LIKELIHOOD ######
     for(dataIter in 1:numData) {
       # Define the distribution of mean predictors at each location (once species interactions are taken into account)
-      expTrapMean[dataIter, 1:numSpecies] <- specCoef[indexedMonth[dataIter], 1:numSpecies]
-      meanPred[dataIter, 1:numSpecies] ~ dmnorm(expTrapMean[dataIter, 1:numSpecies], cov = interactionMatrix[1:numSpecies, 1:numSpecies])
+      meanPred[dataIter, 1:numSpecies] ~ dmnorm(specCoef[cityID[dataIter], 1:numSpecies], cov = interactionMatrix[1:numSpecies, 1:numSpecies])
       for(specIter in 1:numSpecies) {
         # Use the inverse link function
         transPred[dataIter, specIter] <- exp(meanPred[dataIter, specIter])
-        transPredTrap[dataIter, specIter] <- transPred[dataIter, specIter] * estTrappingDays[dataIter]
-        trapCounts[dataIter, specIter] ~ dpois(transPredTrap[dataIter, specIter])
+        # Relate the output to the number of individuals found in the traps (through the Poison distribution)
+        trapCounts[dataIter, specIter] ~ dpois(transPred[dataIter, specIter])
       }
     }
   })
-  # Setup the constants used in the model
-  inConstants <- list(
-    numSpecies = length(curSpeciesNames),
-    numData = nrow(inData$trapCounts),
-    numMonths = length(monthsPresent),
-    indexedMonth = as.integer(factor(pantrapData$monthBegin, as.character(monthsPresent)))
-  )
-  # Set initial values
-  specMeans <- log(apply(X = inData$trapCounts, FUN = mean, MARGIN = 2))
-  specVar <- apply(X = inData$trapCounts, FUN = var, MARGIN = 2)
-  initialValues <- list(
-    specVar = specVar,
-    interactionMatrix = diag(specVar),
-    meanPred = matrix(rep(specMeans, inConstants$numData), nrow = inConstants$numData, ncol = inConstants$numSpecies),
-    specCoef = matrix(rep(specMeans / mean(inData$estTrappingDays), inConstants$numMonths), byrow = TRUE, nrow = inConstants$numMonths, ncol = inConstants$numSpecies)
-  )
   # Setup the model
   uncompiledModel <- nimbleModel(code = modelSpecCode, constants = inConstants, data = inData, inits = initialValues)
   compiledModel <- compileNimble(uncompiledModel)
@@ -115,28 +95,87 @@ runModelMCMC <- function(curIndex, seedArray, speciesNames, pantrapData, varsToM
   compiledMCMC <- compileNimble(uncompiledMCMC, project = uncompiledModel)
   # Run the MCMC
   mcmcOutput <- runMCMC(compiledMCMC, niter = mcmcSamples + mcmcBurnIn, nburnin = mcmcBurnIn,
-    thin = monitorOneThin, thin2 = monitorTwoThin, nchains = mcmcChains,
-    samplesAsCodaMCMC = TRUE, WAIC = FALSE, summary = FALSE, setSeed = curSeed)
+                        thin = monitorOneThin, thin2 = monitorTwoThin, nchains = 1,
+                        samplesAsCodaMCMC = TRUE, WAIC = FALSE, summary = FALSE, setSeed = curSeed)
+  # Turn-off the log file for the current chain
   sink()
-  list(
-    mcmcOutput = mcmcOutput,
-    specMatrix = inData$trapCounts)
+  mcmcOutput
 }
-# Retrieve the number of cities in the dataset
-numCities <- length(levels(pantrapData$cityID))
-# Set the number of cores to use
-numCores <- min(numCities, detectCores())
-# Initialise a cluster
-chainCluster <- makeCluster(numCores)
-# Run the parallelised version of NIMBLE
-allChainsOutput <- parLapply(cl = chainCluster, X = 1:numCities, fun = runModelMCMC,
-  seedArray = floor(runif(numCities, 0.0, .Machine$integer.max)),
-  speciesNames = inputData$speciesNames, pantrapData = pantrapData,
-  varsToMonitor = varsToMonitorOne,
-  predsToMonitor = varsToMonitorTwo, mcmcSamples = mcmcSamples, mcmcBurnIn = mcmcBurnIn, mcmcChains = mcmcChains,
-  monitorOneThin = monitorOneThin, monitorTwoThin = monitorTwoThin, outputLocation = outputLocation)
-names(allChainsOutput) <- levels(pantrapData$cityID)
-# Close the cluster
+
+# Initialise a cluster with a process for each chain
+chainCluster <- makeCluster(mcmcChains)
+# Run the model
+mcmcOutput <- parLapply(cl = chainCluster, X = 1:mcmcChains, fun = runModelMCMC,
+                        seedArray = floor(runif(mcmcChains, 0.0, .Machine$integer.max)),
+                        speciesNames = inputData$speciesNames, pantrapData = pantrapData,
+                        varsToMonitor = varsToMonitorOne, predsToMonitor = varsToMonitorTwo,
+                        mcmcSamples = mcmcSamples, mcmcBurnIn = mcmcBurnIn, mcmcChains = mcmcChains,
+                        monitorOneThin = monitorOneThin, monitorTwoThin = monitorTwoThin, outputLocation = outputLocation)
+# Stop the cluster once the processing is complete
 stopCluster(chainCluster)
+
+# Retrieve the interaction matrix from the mcmc samples
+sampledInteractionMatrix <- do.call(abind, lapply(X = 1:length(mcmcOutput), FUN = function(curIndex, mcmcOutput, speciesNames) {
+  # Retrieve the current output
+  curOutput <- mcmcOutput[[curIndex]]
+  # Retrieve the sampled elements of the interaction matrix
+  allSamples <- as.data.frame(curOutput$samples)
+  allSamples <- allSamples[, grepl("^interactionMatrix", colnames(allSamples), perl = TRUE)]
+  # Reorder the samples into one multi-dimensional array
+  outValues <- apply(X = as.matrix(allSamples), FUN = function(curRow, speciesNames) {
+    matrix(curRow, nrow = length(speciesNames), ncol = length(speciesNames), dimnames = list(speciesNames, speciesNames))
+  }, MARGIN = 1, speciesNames = speciesNames)
+  dim(outValues) <- c(length(speciesNames), length(speciesNames), nrow(allSamples))
+  dimnames(outValues) <- list(speciesNames, speciesNames, paste("chain", curIndex, "_mcmcSample", 1:nrow(allSamples), sep = ""))
+  outValues
+}, mcmcOutput = mcmcOutput, speciesNames = gsub(" ", ".", inputData$speciesNames, fixed = TRUE)))
+
+# Retrieve the estimated means for each of the species
+sampledSpeciesMeans <- do.call(abind, lapply(X = 1:length(mcmcOutput), FUN = function(curIndex, mcmcOutput, speciesNames, cityNames) {
+  # Retrieve the current output
+  curOutput <- mcmcOutput[[curIndex]]
+  # Retrieve all the samples of the species means
+  allSamples <- as.data.frame(curOutput$samples)
+  allSamples <- allSamples[, grepl("^specCoef", colnames(allSamples), perl = TRUE)]
+  # Reorder the samples into one multi-dimensional array
+  outValues <- apply(X = as.matrix(allSamples), FUN = function(curRow, speciesNames, cityNames) {
+    outMat <- matrix(curRow, nrow = length(cityNames), ncol = length(speciesNames), dimnames = list(cityNames, speciesNames), byrow = TRUE)
+    outMat
+  }, MARGIN = 1, speciesNames = speciesNames, cityNames = cityNames)
+  dim(outValues) <- c(length(cityNames), length(speciesNames), nrow(allSamples))
+  dimnames(outValues) <- list(cityNames, speciesNames, paste("chain", curIndex, "_mcmcSample", 1:nrow(allSamples), sep = ""))
+  outValues
+}, mcmcOutput = mcmcOutput, speciesNames = gsub(" ", ".", inputData$speciesNames, fixed = TRUE), cityNames = levels(inputData$pantrapData$cityID)))
+
+# Retrieve the predicted values for each of the species at each of the data points
+sampledPredictions <- do.call(abind, lapply(X = 1:length(mcmcOutput), FUN = function(curIndex, mcmcOutput, speciesNames, sampleID) {
+  # Retrieve the current output
+  curOutput <- mcmcOutput[[curIndex]]
+  # Retrieve all the samples of the species means
+  allSamples <- as.data.frame(curOutput$samples2)
+  # Reorder the samples into one multi-dimensional array
+  outValues <- apply(X = as.matrix(allSamples), FUN = function(curRow, speciesNames, sampleID) {
+    outMat <- matrix(curRow, nrow = length(sampleID), ncol = length(speciesNames), dimnames = list(sampleID, speciesNames), byrow = TRUE)
+    outMat
+  }, MARGIN = 1, speciesNames = speciesNames, sampleID = sampleID)
+  dim(outValues) <- c(length(sampleID), length(speciesNames), nrow(allSamples))
+  dimnames(outValues) <- list(sampleID, speciesNames, paste("chain", curIndex, "_mcmcSample", 1:nrow(allSamples), sep = ""))
+  outValues
+}, mcmcOutput = mcmcOutput, speciesNames = gsub(" ", ".", inputData$speciesNames, fixed = TRUE), sampleID = as.character(inputData$pantrapData$sampleID)))
+
+# Merge the completed MCMC objects into single coda MCMC lists
+variablesMCMC <- do.call(mcmc.list, lapply(X = mcmcOutput, FUN = function(curMCMC) {
+  curMCMC$samples
+}))
+predictionsMCMC <- do.call(mcmc.list, lapply(X = mcmcOutput, FUN = function(curMCMC) {
+  curMCMC$samples2
+}))
+
 # Save the model output to the analysis output directory
-saveRDS(allChainsOutput, file = file.path(outputLocation, "mcmcOutput.rds"))
+saveRDS(list(
+  sampledInteractionMatrix = sampledInteractionMatrix,
+  sampledSpeciesMeans = sampledSpeciesMeans,
+  sampledPredictions = sampledPredictions,
+  variablesMCMC = variablesMCMC,
+  predictionsMCMC = predictionsMCMC
+), file = file.path(outputLocation, "mcmcOutput.rds"))
