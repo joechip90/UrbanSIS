@@ -11,7 +11,7 @@ source("https://raw.githubusercontent.com/joechip90/UrbanSIS/master/OsloAnalysis
 # Set the workspace to perform the analysis in
 workspaceLoc <- file.path(Sys.getenv("WORKSPACE_URBANSIS"), "WP2 - Mapping - 15885002", "OsloAnalysis_Output")
 # Import the transect and pantrap data
-processedData <- readRDS(file.path(workspaceLoc, "WP2 - Mapping - 15885002", "Field DATA final", "ProcessedPantrapAndTransectData.rds"))
+processedData <- readRDS(file.path(Sys.getenv("WORKSPACE_URBANSIS"), "WP2 - Mapping - 15885002", "Field DATA final", "ProcessedPantrapAndTransectData.rds"))
 
 # Initialise appropriate parameters for MCMC analysis
 mcmcSamples <- 150000
