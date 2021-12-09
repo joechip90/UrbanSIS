@@ -5,9 +5,9 @@ library(ggplot2)
 library(DHARMa)
 
 # Set the workspace location
-workspaceLocation <- paste(Sys.getenv("WORKSPACE_URBANSIS_ANALYSIS"), "OsloBeeAnalysis", sep = "/")
+workspaceLocation <- file.path(Sys.getenv("WORKSPACE_URBANSIS"), "WP2 - Mapping - 15885002", "OsloAnalysis_Output")
 # The location of the analysis output
-outLocation <- paste(workspaceLocation, "NetworkAnalysisOutput.rds", sep = "/")
+outLocation <- paste(workspaceLocation, "mcmcOutput.rds", sep = "/")
 # Import the analysis outputs
 analysisOutput <- readRDS(outLocation)
 

@@ -6,14 +6,14 @@ library(parallel)
 library(coda)
 library(nimble)
 
-source(paste(Sys.getenv("WORKSPACE_URBANSIS_GITHUB"), "OsloAnalysis_RetrieveWeatherData.R", sep = "/"))
+source("https://raw.githubusercontent.com/joechip90/UrbanSIS/master/OsloAnalysis_RetrieveWeatherData.R")
 
 # Set the workspace to perform the analysis in
-workspaceLoc <- paste(Sys.getenv("WORKSPACE_URBANSIS_ANALYSIS"), "OsloAnalysis", sep = "/")
+workspaceLoc <- file.path(Sys.getenv("WORKSPACE_URBANSIS"), "WP2 - Mapping - 15885002", "OsloAnalysis_Output")
 # Import the transect and pantrap data
-processedData <- readRDS(paste(workspaceLoc, "ProcessedPantrapAndTransectData.rds", sep = "/"))
+processedData <- readRDS(file.path(workspaceLoc, "WP2 - Mapping - 15885002", "Field DATA final", "ProcessedPantrapAndTransectData.rds"))
 
-# Initialise appropriate paramaeters for MCMC analysis
+# Initialise appropriate parameters for MCMC analysis
 mcmcSamples <- 150000
 mcmcChains <- 4
 mcmcBurnIn <- 10000
@@ -219,4 +219,4 @@ saveRDS(list(
   pollinatorSpecies = usableSpecies,
   covariateNames = colnames(regCovariates),
   analysisData = mergedSampleData
-), file = paste(workspaceLoc, "NetworkAnalysisOutput.rds", sep = "/"))
+), file = paste(workspaceLoc, "mcmcOutput.rds", sep = "/"))
