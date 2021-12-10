@@ -15,6 +15,9 @@ analysisOutput <- readRDS(file.path(outputLocation, "mcmcOutput.rds"))
 # Import the processed pantrap data
 inputData <- readRDS(file.path(urbanSISRepository, "MultiCity_ProcessedPantrapData.rds"))
 
+# Maximum number of cores to use during visualisation
+maxCores <- 10
+
 # Function to create an interaction plot between the species
 createInteractionPlot <- function(sampledInteractionMatrix) {
   # Function to create a summary data frame from the sampled interaction matrix
@@ -70,7 +73,6 @@ ggsave(file = file.path(outputLocation, "interactionMatrix.pdf"), plot = interac
 firstSpecies <- c("Apis mellifera")
 specOrder <- c(firstSpecies, inputData$speciesNames[!(inputData$speciesNames %in% firstSpecies)])
 specOrder <- specOrder[gsub(" ", ".", specOrder, fixed = TRUE) %in% colnames(analysisOutput$sampledSpeciesMeans)]
-specOrder <- specOrder[1:4]
 
 # Function to plot diversity estimates with changes in the numbers of different bee species
 diversityEstimation <- function(xSpecies, sampledSpeciesMeans, sampledInteractionMatrix, pantrapData, outputLocation) {
@@ -303,7 +305,7 @@ if(!dir.exists(copulaLocation)) {
   dir.create(copulaLocation)
 }
 # Go over every combination of species interaction and calculate the copula plots
-copulaCluster <- makeCluster(detectCores())
+copulaCluster <- makeCluster(min(detectCores(), maxCores))
 copulaPlots <- setNames(parLapply(cl = copulaCluster, X = specOrder, fun = function(xSpecies, speciesNames, sampledSpeciesMeans, sampledInteractionMatrix, pantrapData, outputLocation, copulaEstimation) {
   library(condMVNorm)
   library(ggplot2)

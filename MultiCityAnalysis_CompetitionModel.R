@@ -5,10 +5,10 @@ library(abind)
 
 # Initialise appropriate parameters for MCMC analysis
 mcmcSamples <- 150000
-mcmcChains <- 4
+mcmcChains <- 10
 mcmcBurnIn <- 10000
-numVarsWanted <- 100
-numPredsWanted <- 50
+numVarsWanted <- 500
+numPredsWanted <- 500
 monitorOneThin <- floor(mcmcSamples * mcmcChains / numVarsWanted)
 monitorTwoThin <- floor(mcmcSamples * mcmcChains / numPredsWanted)
 
