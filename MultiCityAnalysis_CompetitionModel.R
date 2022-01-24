@@ -4,13 +4,16 @@ library(nimble)
 library(abind)
 
 # Initialise appropriate parameters for MCMC analysis
-mcmcSamples <- 150000
-mcmcChains <- 4
-mcmcBurnIn <- 10000
-numVarsWanted <- 4000
-numPredsWanted <- 4000
-monitorOneThin <- floor(mcmcSamples * mcmcChains / numVarsWanted)
-monitorTwoThin <- floor(mcmcSamples * mcmcChains / numPredsWanted)
+mcmcSamples <- ifelse(exists("mcmcSamples"), mcmcSamples, 150000)
+mcmcChains <- ifelse(exists("mcmcChains"), mcmcChains, 4)
+mcmcBurnIn <- ifelse(exists("mcmcBurnIn"), mcmcBurnIn, 10000)
+numVarsWanted <- ifelse(exists("numVarsWanted"), numVarsWanted, 4000)
+numPredsWanted <- ifelse(exists("numPredsWanted"), numPredsWanted, 4000)
+monitorOneThin <- ifelse(exists("monitorOneThin"), monitorOneThin, floor(mcmcSamples * mcmcChains / numVarsWanted))
+monitorTwoThin <- ifelse(exists("monitorTwoThin"), monitorTwoThin, floor(mcmcSamples * mcmcChains / numPredsWanted))
+
+cat("Running ", mcmcChains, " chains with a burn-in of ", mcmcChains, " samples and ", mcmcSamples, " samples collected after burn-in\n", sep = "")
+cat("Thinning interval is set at ", monitorOneThin, " for variables (for a total of ", numVarsWanted, " samples across all chains) and ", monitorTwoThin, " for predictions (for a total of ", numPredsWanted, " samples across all chains)\n", sep = "")
 
 # Set the location of the pan trap and pollinator collection data
 urbanSISRepository <- file.path(Sys.getenv("WORKSPACE_URBANSIS"), "WP2 - Mapping - 15885002")
