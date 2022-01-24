@@ -60,7 +60,7 @@ runModelMCMC <- function(curChainNumber, seedArray, speciesNames, pantrapData, v
   initialValues <- list(
     specVar = specVar,
     # interactionMatrix = diag(specVar),
-    covPred = matrix(0, nrow = inConstants$numSpecies, ncol = inConstants$numData),
+    covPred = matrix(0, nrow = inConstants$numSpecies, ncol = inConstants$numData) + diag(specVar),
     # meanPred = matrix(rep(specMeans, inConstants$numData), nrow = inConstants$numData, ncol = inConstants$numSpecies, byrow = TRUE),
     specCoef = matrix(rep(specMeans, inConstants$numCities), nrow = inConstants$numCities, ncol = inConstants$numSpecies, byrow = TRUE)
   )
