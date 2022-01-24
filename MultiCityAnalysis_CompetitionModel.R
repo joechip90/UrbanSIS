@@ -110,13 +110,13 @@ runModelMCMC <- function(curChainNumber, seedArray, speciesNames, pantrapData, v
   mcmcOutput
 }
 
-debug(runModelMCMC)
-mcmcOutput <- lapply(X = 1:mcmcChains,  FUN = runModelMCMC,
-                     seedArray = floor(runif(mcmcChains, 0.0, .Machine$integer.max)),
-                     speciesNames = inputData$speciesNames, pantrapData = pantrapData,
-                     varsToMonitor = varsToMonitorOne, predsToMonitor = varsToMonitorTwo,
-                     mcmcSamples = mcmcSamples, mcmcBurnIn = mcmcBurnIn, mcmcChains = mcmcChains,
-                     monitorOneThin = monitorOneThin, monitorTwoThin = monitorTwoThin, outputLocation = outputLocation)
+#debug(runModelMCMC)
+#mcmcOutput <- lapply(X = 1:mcmcChains,  FUN = runModelMCMC,
+#                     seedArray = floor(runif(mcmcChains, 0.0, .Machine$integer.max)),
+#                     speciesNames = inputData$speciesNames, pantrapData = pantrapData,
+#                     varsToMonitor = varsToMonitorOne, predsToMonitor = varsToMonitorTwo,
+#                     mcmcSamples = mcmcSamples, mcmcBurnIn = mcmcBurnIn, mcmcChains = mcmcChains,
+#                     monitorOneThin = monitorOneThin, monitorTwoThin = monitorTwoThin, outputLocation = outputLocation)
 
 # Initialise a cluster with a process for each chain
 chainCluster <- makeCluster(mcmcChains)
