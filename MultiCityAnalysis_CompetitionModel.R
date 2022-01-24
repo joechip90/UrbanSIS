@@ -4,11 +4,11 @@ library(nimble)
 library(abind)
 
 # Initialise appropriate parameters for MCMC analysis
-mcmcSamples <- 150000
-mcmcChains <- 10
-mcmcBurnIn <- 10000
-numVarsWanted <- 500
-numPredsWanted <- 500
+mcmcSamples <- 100
+mcmcChains <- 4
+mcmcBurnIn <- 10
+numVarsWanted <- 10
+numPredsWanted <- 10
 monitorOneThin <- floor(mcmcSamples * mcmcChains / numVarsWanted)
 monitorTwoThin <- floor(mcmcSamples * mcmcChains / numPredsWanted)
 
@@ -27,16 +27,17 @@ if(dir.exists(outputLocation)) {
 dir.create(outputLocation)
 
 # Set the variables to monitor
-varsToMonitorOne <- c("interactionMatrix", "specCoef")  # Monitors the interaction matrix elements and the log of mean species counts at each city
+varsToMonitorOne <- c("specCoef")                       # Monitors the log of mean species counts at each city
 varsToMonitorTwo <- c("transPred")                      # Monitors the predictions made at each city
 
 # Define a function to setup and run the model
 runModelMCMC <- function(curChainNumber, seedArray, speciesNames, pantrapData, varsToMonitor, predsToMonitor, mcmcSamples, mcmcBurnIn, mcmcChains, monitorOneThin, monitorTwoThin, outputLocation) {
   # Create a log file for the current chain
-  sink(file = file.path(outputLocation, paste("MCMCLogFile_chain", curChainNumber, ".txt", sep = "")))
+  # sink(file = file.path(outputLocation, paste("MCMCLogFile_chain", curChainNumber, ".txt", sep = "")))
   # Load the nimble and coda libraries
   library(coda)
   library(nimble)
+  source("C:/Users/joseph.chipperfield/OneDrive - NINA/Work/UrbanBees/UrbanSIS_GitHub/NIMBLEExtensions.R")
   # Retrieve the current seed from the seed array
   curSeed <- seedArray[curChainNumber]
   # Retrieve the data for the current city
@@ -55,8 +56,9 @@ runModelMCMC <- function(curChainNumber, seedArray, speciesNames, pantrapData, v
   specVar <- apply(X = inData$trapCounts, FUN = var, MARGIN = 2)
   initialValues <- list(
     specVar = specVar,
-    interactionMatrix = diag(specVar),
-    meanPred = matrix(rep(specMeans, inConstants$numData), nrow = inConstants$numData, ncol = inConstants$numSpecies, byrow = TRUE),
+    # interactionMatrix = diag(specVar),
+    covPred = matrix(0, nrow = inConstants$numSpecies, ncol = inConstants$numData),
+    # meanPred = matrix(rep(specMeans, inConstants$numData), nrow = inConstants$numData, ncol = inConstants$numSpecies, byrow = TRUE),
     specCoef = matrix(rep(specMeans, inConstants$numCities), nrow = inConstants$numCities, ncol = inConstants$numSpecies, byrow = TRUE)
   )
   # Specify the NIMBLE model
@@ -74,11 +76,14 @@ runModelMCMC <- function(curChainNumber, seedArray, speciesNames, pantrapData, v
     # However see http://dx.doi.org/10.1080/00273171.2015.1065398 for explanation that this might be fairly informative
     # in situations where the variance is small
     specVarMat[1:numSpecies, 1:numSpecies] <- diag(specVar[1:numSpecies])
-    interactionMatrix[1:numSpecies, 1:numSpecies] ~ dinvwish(specVarMat[1:numSpecies, 1:numSpecies], numSpecies)
+    # interactionMatrix[1:numSpecies, 1:numSpecies] ~ dinvwish(specVarMat[1:numSpecies, 1:numSpecies], numSpecies)
+    zeroVec[1:numSpecies] <- rep(0.0, numSpecies)
+    covPred[1:numSpecies, 1:numData] ~ dinvWishMNormMargSigma(specVarMat[1:numSpecies, 1:numSpecies], numSpecies, zeroVec[1:numSpecies], numData)
     ###### SET LIKELIHOOD ######
     for(dataIter in 1:numData) {
       # Define the distribution of mean predictors at each location (once species interactions are taken into account)
-      meanPred[dataIter, 1:numSpecies] ~ dmnorm(specCoef[cityID[dataIter], 1:numSpecies], cov = interactionMatrix[1:numSpecies, 1:numSpecies])
+      # meanPred[dataIter, 1:numSpecies] ~ dmnorm(specCoef[cityID[dataIter], 1:numSpecies], cov = interactionMatrix[1:numSpecies, 1:numSpecies])
+      meanPred[dataIter, 1:numSpecies] <- specCoef[cityID[dataIter], 1:numSpecies] + covPred[1:numSpecies, dataIter]
       for(specIter in 1:numSpecies) {
         # Use the inverse link function
         transPred[dataIter, specIter] <- exp(meanPred[dataIter, specIter])
@@ -89,6 +94,7 @@ runModelMCMC <- function(curChainNumber, seedArray, speciesNames, pantrapData, v
   })
   # Setup the model
   uncompiledModel <- nimbleModel(code = modelSpecCode, constants = inConstants, data = inData, inits = initialValues)
+  browser()
   compiledModel <- compileNimble(uncompiledModel)
   # Define the MCMC object
   uncompiledMCMC <- buildMCMC(uncompiledModel, monitors = varsToMonitor, monitors2 = predsToMonitor, thin = monitorOneThin, thin2 = monitorTwoThin, enableWAIC = FALSE)
@@ -98,9 +104,17 @@ runModelMCMC <- function(curChainNumber, seedArray, speciesNames, pantrapData, v
                         thin = monitorOneThin, thin2 = monitorTwoThin, nchains = 1,
                         samplesAsCodaMCMC = TRUE, WAIC = FALSE, summary = FALSE, setSeed = curSeed)
   # Turn-off the log file for the current chain
-  sink()
+  # sink()
   mcmcOutput
 }
+
+# debug(runModelMCMC)
+mcmcOutput <- lapply(X = 1:mcmcChains,  FUN = runModelMCMC,
+  seedArray = floor(runif(mcmcChains, 0.0, .Machine$integer.max)),
+  speciesNames = inputData$speciesNames, pantrapData = pantrapData,
+  varsToMonitor = varsToMonitorOne, predsToMonitor = varsToMonitorTwo,
+  mcmcSamples = mcmcSamples, mcmcBurnIn = mcmcBurnIn, mcmcChains = mcmcChains,
+  monitorOneThin = monitorOneThin, monitorTwoThin = monitorTwoThin, outputLocation = outputLocation)
 
 # Initialise a cluster with a process for each chain
 chainCluster <- makeCluster(mcmcChains)
@@ -114,8 +128,46 @@ mcmcOutput <- parLapply(cl = chainCluster, X = 1:mcmcChains, fun = runModelMCMC,
 # Stop the cluster once the processing is complete
 stopCluster(chainCluster)
 
+# Retrieve the estimated means for each of the species
+sampledSpeciesMeans <- do.call(abind, lapply(X = 1:length(mcmcOutput), FUN = function(curIndex, mcmcOutput, speciesNames, cityNames, mcmcBurnIn, monitorOneThin) {
+  # Retrieve the current output
+  curOutput <- mcmcOutput[[curIndex]]
+  # Retrieve all the samples of the species means
+  allSamples <- as.data.frame(curOutput$samples)
+  allSamples <- allSamples[, grepl("^specCoef", colnames(allSamples), perl = TRUE)]
+  # Reorder the samples into one multi-dimensional array
+  outValues <- apply(X = as.matrix(allSamples), FUN = function(curRow, speciesNames, cityNames) {
+    outMat <- matrix(curRow, nrow = length(cityNames), ncol = length(speciesNames), dimnames = list(cityNames, speciesNames), byrow = TRUE)
+    outMat
+  }, MARGIN = 1, speciesNames = speciesNames, cityNames = cityNames)
+  dim(outValues) <- c(length(cityNames), length(speciesNames), nrow(allSamples))
+  dimnames(outValues) <- list(cityNames, speciesNames, paste("chain", curIndex, "_mcmcSample", mcmcBurnIn + 1:nrow(allSamples) * monitorOneThin, sep = ""))
+  outValues
+}, mcmcOutput = mcmcOutput, speciesNames = gsub(" ", ".", inputData$speciesNames, fixed = TRUE), cityNames = levels(inputData$pantrapData$cityID), mcmcBurnIn = mcmcBurnIn, monitorOneThin = monitorOneThin))
+
+# Retrieve the predicted values for each of the species at each of the data points
+sampledPredictions <- do.call(abind, lapply(X = 1:length(mcmcOutput), FUN = function(curIndex, mcmcOutput, speciesNames, sampleID, mcmcBurnIn, monitorTwoThin) {
+  # Retrieve the current output
+  curOutput <- mcmcOutput[[curIndex]]
+  # Retrieve all the samples of the species means
+  allSamples <- as.data.frame(curOutput$samples2)
+  # Reorder the samples into one multi-dimensional array
+  outValues <- apply(X = as.matrix(allSamples), FUN = function(curRow, speciesNames, sampleID) {
+    outMat <- matrix(curRow, nrow = length(sampleID), ncol = length(speciesNames), dimnames = list(sampleID, speciesNames), byrow = TRUE)
+    outMat
+  }, MARGIN = 1, speciesNames = speciesNames, sampleID = sampleID)
+  dim(outValues) <- c(length(sampleID), length(speciesNames), nrow(allSamples))
+  dimnames(outValues) <- list(sampleID, speciesNames, paste("chain", curIndex, "_mcmcSample", mcmcBurnIn + 1:nrow(allSamples) * monitorTwoThin, sep = ""))
+  outValues
+}, mcmcOutput = mcmcOutput, speciesNames = gsub(" ", ".", inputData$speciesNames, fixed = TRUE), sampleID = as.character(inputData$pantrapData$sampleID), mcmcBurnIn = mcmcBurnIn, monitorTwoThin = monitorTwoThin))
+
 # Retrieve the interaction matrix from the mcmc samples
-sampledInteractionMatrix <- do.call(abind, lapply(X = 1:length(mcmcOutput), FUN = function(curIndex, mcmcOutput, speciesNames) {
+sampledInteractionMatrix <- do.call(abind, lapply(X = rownames(sampledPredictions)[rownames(sampledPredictions) %in% rownames(sampledSpeciesMeans)], FUN = function(curRowName, sampledSpeciesMeans, sampledPredictions) {
+  
+}, sampledSpeciesMeans = sampledSpeciesMeans, sampledPredictions = sampledPredictions))
+
+# Retrieve the interaction matrix from the mcmc samples
+sampledInteractionMatrix <- do.call(abind, lapply(X = 1:length(mcmcOutput), FUN = function(curIndex, mcmcOutput, speciesNames, sampledPredictions) {
   # Retrieve the current output
   curOutput <- mcmcOutput[[curIndex]]
   # Retrieve the sampled elements of the interaction matrix
@@ -128,40 +180,7 @@ sampledInteractionMatrix <- do.call(abind, lapply(X = 1:length(mcmcOutput), FUN 
   dim(outValues) <- c(length(speciesNames), length(speciesNames), nrow(allSamples))
   dimnames(outValues) <- list(speciesNames, speciesNames, paste("chain", curIndex, "_mcmcSample", 1:nrow(allSamples), sep = ""))
   outValues
-}, mcmcOutput = mcmcOutput, speciesNames = gsub(" ", ".", inputData$speciesNames, fixed = TRUE)))
-
-# Retrieve the estimated means for each of the species
-sampledSpeciesMeans <- do.call(abind, lapply(X = 1:length(mcmcOutput), FUN = function(curIndex, mcmcOutput, speciesNames, cityNames) {
-  # Retrieve the current output
-  curOutput <- mcmcOutput[[curIndex]]
-  # Retrieve all the samples of the species means
-  allSamples <- as.data.frame(curOutput$samples)
-  allSamples <- allSamples[, grepl("^specCoef", colnames(allSamples), perl = TRUE)]
-  # Reorder the samples into one multi-dimensional array
-  outValues <- apply(X = as.matrix(allSamples), FUN = function(curRow, speciesNames, cityNames) {
-    outMat <- matrix(curRow, nrow = length(cityNames), ncol = length(speciesNames), dimnames = list(cityNames, speciesNames), byrow = TRUE)
-    outMat
-  }, MARGIN = 1, speciesNames = speciesNames, cityNames = cityNames)
-  dim(outValues) <- c(length(cityNames), length(speciesNames), nrow(allSamples))
-  dimnames(outValues) <- list(cityNames, speciesNames, paste("chain", curIndex, "_mcmcSample", 1:nrow(allSamples), sep = ""))
-  outValues
-}, mcmcOutput = mcmcOutput, speciesNames = gsub(" ", ".", inputData$speciesNames, fixed = TRUE), cityNames = levels(inputData$pantrapData$cityID)))
-
-# Retrieve the predicted values for each of the species at each of the data points
-sampledPredictions <- do.call(abind, lapply(X = 1:length(mcmcOutput), FUN = function(curIndex, mcmcOutput, speciesNames, sampleID) {
-  # Retrieve the current output
-  curOutput <- mcmcOutput[[curIndex]]
-  # Retrieve all the samples of the species means
-  allSamples <- as.data.frame(curOutput$samples2)
-  # Reorder the samples into one multi-dimensional array
-  outValues <- apply(X = as.matrix(allSamples), FUN = function(curRow, speciesNames, sampleID) {
-    outMat <- matrix(curRow, nrow = length(sampleID), ncol = length(speciesNames), dimnames = list(sampleID, speciesNames), byrow = TRUE)
-    outMat
-  }, MARGIN = 1, speciesNames = speciesNames, sampleID = sampleID)
-  dim(outValues) <- c(length(sampleID), length(speciesNames), nrow(allSamples))
-  dimnames(outValues) <- list(sampleID, speciesNames, paste("chain", curIndex, "_mcmcSample", 1:nrow(allSamples), sep = ""))
-  outValues
-}, mcmcOutput = mcmcOutput, speciesNames = gsub(" ", ".", inputData$speciesNames, fixed = TRUE), sampleID = as.character(inputData$pantrapData$sampleID)))
+}, mcmcOutput = mcmcOutput, speciesNames = gsub(" ", ".", inputData$speciesNames, fixed = TRUE), sampledPredictions = sampledPredictions))
 
 # Merge the completed MCMC objects into single coda MCMC lists
 variablesMCMC <- do.call(mcmc.list, lapply(X = mcmcOutput, FUN = function(curMCMC) {
