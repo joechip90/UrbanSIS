@@ -37,7 +37,7 @@ runModelMCMC <- function(curChainNumber, seedArray, speciesNames, pantrapData, v
   # Load the nimble and coda libraries
   library(coda)
   library(nimble)
-  source("C:/Users/joseph.chipperfield/OneDrive - NINA/Work/UrbanBees/UrbanSIS_GitHub/NIMBLEExtensions.R")
+  source("https://raw.githubusercontent.com/joechip90/UrbanSIS/master/NIMBLEExtensions.R")
   # Retrieve the current seed from the seed array
   curSeed <- seedArray[curChainNumber]
   # Retrieve the data for the current city
